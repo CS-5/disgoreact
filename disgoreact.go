@@ -16,6 +16,8 @@ type (
 		Session *discordgo.Session
 		// TickRate is how frequently to poll the reactions on the message
 		TickRate time.Duration
+		// Data (for lack of a better name). An interface for storing just about anything
+		Data interface{}
 	}
 
 	// Option contains a callback and expiration for a given emoji
@@ -23,7 +25,7 @@ type (
 		// A unicode representation of the emoji option
 		Emoji string
 		// OnSucess is the function to call every time MinClicks has been met on the given emoji
-		OnSucess func(stopWatching chan bool, user *discordgo.User, watchContext *WatchContext)
+		OnSucess func(user *discordgo.User, watchContext *WatchContext)
 		// OnError is the function to call when the watcher or poller encounters an error
 		OnError func(err error, watchContext *WatchContext)
 		// ReactionLimit is the cap for the total number of reactions polled
@@ -38,6 +40,7 @@ func NewWatcher(
 	message *discordgo.Message,
 	session *discordgo.Session,
 	tickRate time.Duration,
+	data interface{},
 ) (*WatchContext, error) {
 	if tickRate == 0 {
 		return &WatchContext{}, fmt.Errorf("no tickrate specified (cannot be 0)")
@@ -47,6 +50,7 @@ func NewWatcher(
 		Message:  message,
 		Session:  session,
 		TickRate: tickRate,
+		Data:     data,
 	}, nil
 }
 
@@ -70,25 +74,20 @@ func (ctx *WatchContext) Add(options ...Option) error {
 		}
 
 		/* Fire up watcher */
-		go ctx.watcher(&v)
+		go ctx.watcher(v)
 	}
 
 	return nil
 }
 
-func (ctx *WatchContext) watcher(opt *Option) {
+func (ctx *WatchContext) watcher(opt Option) {
 	expiration := time.After(opt.Expiration)
 	tick := time.Tick(ctx.TickRate)
 	expired := false
-	stopWatching := make(chan bool, 1)
 
 	for {
 		/* Check expiration timer. If expired or if stop requested, stop */
 		select {
-		case <-stopWatching:
-			if <-stopWatching {
-				expired = true
-			}
 		case <-expiration:
 			expired = true
 		case <-tick:
@@ -100,7 +99,7 @@ func (ctx *WatchContext) watcher(opt *Option) {
 			}
 
 			/* Poll the message. If there is a new reaction (i.e. total reactions > 1) return a user */
-			user, err := poll(ctx.Session, ctx.Message.ChannelID, ctx.Message.ID, opt)
+			user, err := poll(ctx.Session, ctx.Message.ChannelID, ctx.Message.ID, &opt)
 			if err != nil {
 				opt.OnError(err, ctx)
 				return
@@ -108,7 +107,7 @@ func (ctx *WatchContext) watcher(opt *Option) {
 
 			/* Make sure we're actually returning a user */
 			if (discordgo.User{}) != *user {
-				opt.OnSucess(stopWatching, user, ctx)
+				opt.OnSucess(user, ctx)
 			}
 		}
 	}
