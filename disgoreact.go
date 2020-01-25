@@ -23,7 +23,7 @@ type (
 		// A unicode representation of the emoji option
 		Emoji string
 		// OnSucess is the function to call every time MinClicks has been met on the given emoji
-		OnSucess func(user *discordgo.User, watchContext *WatchContext)
+		OnSucess func(stopWatching chan bool, user *discordgo.User, watchContext *WatchContext)
 		// OnError is the function to call when the watcher or poller encounters an error
 		OnError func(err error, watchContext *WatchContext)
 		// ReactionLimit is the cap for the total number of reactions polled
@@ -80,13 +80,17 @@ func (ctx *WatchContext) watcher(opt *Option) {
 	expiration := time.After(opt.Expiration)
 	tick := time.Tick(ctx.TickRate)
 	expired := false
+	stopWatching := make(chan bool, 1)
 
 	for {
-		/* Check expiration timer. If expired, stop */
+		/* Check expiration timer. If expired or if stop requested, stop */
 		select {
+		case <-stopWatching:
+			if <-stopWatching {
+				expired = true
+			}
 		case <-expiration:
 			expired = true
-			break
 		case <-tick:
 			if expired {
 				ctx.Session.MessageReactionsRemoveAll(
@@ -104,10 +108,9 @@ func (ctx *WatchContext) watcher(opt *Option) {
 
 			/* Make sure we're actually returning a user */
 			if (discordgo.User{}) != *user {
-				opt.OnSucess(user, ctx)
+				opt.OnSucess(stopWatching, user, ctx)
 			}
 		}
-
 	}
 }
 
